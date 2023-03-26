@@ -1,156 +1,90 @@
 #!/bin/bash
 
-PSQL="psql -X --username=freecodecamp --dbname=bikes --tuples-only -c"
+PSQL="psql --username=freecodecamp --dbname=number_guess -t --no-align -c"
 
-echo -e "\n~~~~~ Bike Rental Shop ~~~~~\n"
+#Random number generator
+NUMBER_TO_GUESS=$(( 1 + $RANDOM % 1000 ))
+#echo $NUMBER_TO_GUESS
 
-MAIN_MENU() {
+echo -e "\n~~~~~ NUMBER GUESSING GAME ~~~~~\n"
+#Enter username
+echo "Enter your username:"
+read USERNAME
+
+#Check database for username
+RECORD=$($PSQL "SELECT game_no, best_game FROM user_data WHERE username = '$USERNAME'")
+if [[ -z $RECORD ]]
+then
+  #If not in database
+  echo -e "\nWelcome, $USERNAME! It looks like this is your first time here."
+  #Save username to database
+  INPUT_USERNAME=$($PSQL "INSERT INTO user_data(username) VALUES('$USERNAME')")
+  INITIALIZE_GAME_NO=$($PSQL "UPDATE user_data SET game_no = 1 WHERE username = '$USERNAME'")
+  INITIALIZE_BEST_GAME=$($PSQL "UPDATE user_data SET best_game = 999 WHERE username = '$USERNAME'")
+else
+
+  #If username is in database
+  echo $RECORD | while IFS="|" read GAME_NO BEST_GAME
+  do
+    echo -e "\nWelcome back, $USERNAME! You have played $GAME_NO games, and your best game took $BEST_GAME guesses."
+  done
+
+fi
+
+CLEAR_GUESS_RECORD=$($PSQL "TRUNCATE guess")
+CLEAR_GUESS_NO=$($PSQL "ALTER SEQUENCE guess_no_seq RESTART")
+#Collect guessed number
+echo -e "\nGuess the secret number between 1 and 1000:"
+
+MAIN_GAME() {
+
   if [[ $1 ]]
   then
     echo -e "\n$1"
   fi
 
-  echo "How may I help you?" 
-  echo -e "\n1. Rent a bike\n2. Return a bike\n3. Exit"
-  read MAIN_MENU_SELECTION
+  read GUESSED_NUMBER
 
-  case $MAIN_MENU_SELECTION in
-    1) RENT_MENU ;;
-    2) RETURN_MENU ;;
-    3) EXIT ;;
-    *) MAIN_MENU "Please enter a valid option." ;;
-  esac
-}
-
-RENT_MENU() {
-  # get available bikes
-  AVAILABLE_BIKES=$($PSQL "SELECT bike_id, type, size FROM bikes WHERE available = true ORDER BY bike_id")
-
-  # if no bikes available
-  if [[ -z $AVAILABLE_BIKES ]]
+  if [[ ! $GUESSED_NUMBER =~ ^[0-9]+$ ]]
   then
-    # send to main menu
-    MAIN_MENU "Sorry, we don't have any bikes available right now."
+    #If not an integer
+    echo -e "\nThat is not an integer, guess again:"
+    MAIN_MENU
   else
-    # display available bikes
-    echo -e "\nHere are the bikes we have available:"
-    echo "$AVAILABLE_BIKES" | while read BIKE_ID BAR TYPE BAR SIZE
-    do
-      echo "$BIKE_ID) $SIZE\" $TYPE Bike"
-    done
-
-    # ask for bike to rent
-    echo -e "\nWhich one would you like to rent?"
-    read BIKE_ID_TO_RENT
-
-    # if input is not a number
-    if [[ ! $BIKE_ID_TO_RENT =~ ^[0-9]+$ ]]
+    #Compare guessed number with generated number
+    if [[ $GUESSED_NUMBER > $NUMBER_TO_GUESS ]]
     then
-      # send to main menu
-      MAIN_MENU "That is not a valid bike number."
+    #If lower
+      UPDATE_GUESS_NO=$($PSQL "INSERT INTO guess(guess) VALUES($GUESSED_NUMBER)")
+      #TEST: GUESS_NO=$($PSQL "SELECT MAX(no) FROM guess")
+      #TEST: echo $GUESS_NO
+      MAIN_GAME "It's lower than that, guess again:"
+    elif [[ $GUESSED_NUMBER < $NUMBER_TO_GUESS ]]
+    then
+    #If higher
+      UPDATE_GUESS_NO=$($PSQL "INSERT INTO guess(guess) VALUES($GUESSED_NUMBER)")
+      #TEST: GUESS_NO=$($PSQL "SELECT MAX(no) FROM guess")
+      #TEST: echo $GUESS_NO
+      MAIN_GAME "It's higher than that, guess again:"
     else
-      # get bike availability
-      BIKE_AVAILABILITY=$($PSQL "SELECT available FROM bikes WHERE bike_id = $BIKE_ID_TO_RENT AND available = true")
-
-      # if not available
-      if [[ -z $BIKE_AVAILABILITY ]]
+    #If same
+      NO_OF_GUESS=$(( $($PSQL "SELECT MAX(no) FROM guess") + 1))
+      echo -e "\nYou guessed it in $NO_OF_GUESS tries. The secret number was $NUMBER_TO_GUESS. Nice job!"
+      #Compare number of guesses with best game
+      BEST_GAME=$($PSQL "SELECT best_game FROM user_data WHERE username = '$USERNAME'")
+      #TEST: echo "NO OF GUESS: $NO_OF_GUESS"
+      #TEST: echo "BEST GAME: $BEST_GAME"
+      
+      if [[ $NO_OF_GUESS < $BEST_GAME ]]
       then
-        # send to main menu
-        MAIN_MENU "That bike is not available."
-      else
-        # get customer info
-        echo -e "\nWhat's your phone number?"
-        read PHONE_NUMBER
-
-        CUSTOMER_NAME=$($PSQL "SELECT name FROM customers WHERE phone = '$PHONE_NUMBER'")
-
-        # if customer doesn't exist
-        if [[ -z $CUSTOMER_NAME ]]
-        then
-          # get new customer name
-          echo -e "\nWhat's your name?"
-          read CUSTOMER_NAME
-
-          # insert new customer
-          INSERT_CUSTOMER_RESULT=$($PSQL "INSERT INTO customers(name, phone) VALUES('$CUSTOMER_NAME', '$PHONE_NUMBER')") 
-        fi
-
-        # get customer_id
-        CUSTOMER_ID=$($PSQL "SELECT customer_id FROM customers WHERE phone='$PHONE_NUMBER'")
-
-        # insert bike rental
-        INSERT_RENTAL_RESULT=$($PSQL "INSERT INTO rentals(customer_id, bike_id) VALUES($CUSTOMER_ID, $BIKE_ID_TO_RENT)")
-
-        # set bike availability to false
-        SET_TO_FALSE_RESULT=$($PSQL "UPDATE bikes SET available = false WHERE bike_id = $BIKE_ID_TO_RENT")
-
-        # get bike info
-        BIKE_INFO=$($PSQL "SELECT size, type FROM bikes WHERE bike_id = $BIKE_ID_TO_RENT")
-        BIKE_INFO_FORMATTED=$(echo $BIKE_INFO | sed 's/ |/"/')
-        
-        # send to main menu
-        MAIN_MENU "I have put you down for the $BIKE_INFO_FORMATTED Bike, $CUSTOMER_NAME."
+        UPDATE_BEST_GAME=$($PSQL "UPDATE user_data SET best_game = $NO_OF_GUESS where username = '$USERNAME'")
       fi
+      #Update no of games played
+      GAME_NO=$($PSQL "SELECT game_no FROM user_data WHERE username = '$USERNAME'")
+      UPDATE_GAME_ON=$($PSQL "UPDATE user_data SET game_no = $GAME_NO + 1 where username = '$USERNAME'")
     fi
   fi
+
 }
 
-RETURN_MENU() {
-  #get customer info
-  echo -e "\nWhat's your phone number?"
-  read PHONE_NUMBER
-  CUSTOMER_ID=$($PSQL "SELECT customer_id FROM customers WHERE phone = '$PHONE_NUMBER'")
-  #if not found
-  if [[ -z $CUSTOMER_ID ]]
-  then
-    #send to main menu
-    MAIN_MENU "I could not find a record for that phone number."
-  else
-    #get customer's rentals
-    CUSTOMER_RENTALS=$($PSQL "SELECT bike_id, type, size FROM bikes INNER JOIN rentals USING(bike_id) INNER JOIN customers USING(customer_id) WHERE phone='$PHONE_NUMBER' AND date_returned IS NULL ORDER BY bike_id")
-    #if no rentals
-    if [[ -z $CUSTOMER_RENTALS ]]
-    then
-      #send to main menu
-      MAIN_MENU "You do not have any bikes rented."
-    else
-      #display rented bikes
-      echo -e "\nHere are your rentals:"
-      echo "$CUSTOMER_RENTALS" | while read BIKE_ID BAR TYPE BAR SIZE
-      do
-        echo "$BIKE_ID) $SIZE\" $TYPE Bike"
-      done
-      #ask for bike to return
-      echo -e "\nWhich one would you like to return?"
-      read BIKE_ID_TO_RETURN
-      #if not a number
-      if [[ ! $BIKE_ID_TO_RETURN =~ ^[0-9]+$ ]]
-      then
-        #send to main menu
-        MAIN_MENU "That is not a valid bike number."
-      else
-        # check if input is rented
-        RENTAL_ID=$($PSQL "SELECT rental_id FROM rentals INNER JOIN customers USING (customer_id) WHERE phone='$PHONE_NUMBER' AND bike_id=$BIKE_ID_TO_RETURN AND date_returned IS NULL")
-        # if input not rented
-        if [[ -z $RENTAL_ID ]]
-        then
-          # send to main menu
-          MAIN_MENU "You do not have that bike rented."
-        else
-          #update date_returned
-          RETURN_BIKE_RESULT=$($PSQL "UPDATE rentals SET date_returned = NOW() WHERE rental_id=$RENTAL_ID")
-          #set bike availability to true
-          SET_TO_TRUE_RESULT=$($PSQL "UPDATE bikes SET available='true' WHERE bike_id=$BIKE_ID_TO_RETURN")
-          #send to main menu
-          MAIN_MENU "Thank you for returning your bike."
-        fi
-      fi
-    fi
-  fi
-}
-
-EXIT() {
-  echo -e "\nThank you for stopping in.\n"
-}
-
-MAIN_MENU
+MAIN_GAME
