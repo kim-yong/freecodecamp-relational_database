@@ -1,0 +1,70 @@
+#!/bin/bash
+
+PSQL="psql --username=freecodecamp --dbname=number_guess -t --no-align -c"
+
+#Random number generator
+NUMBER_TO_GUESS=$(( 1 + $RANDOM % 1000 ))
+echo $NUMBER_TO_GUESS
+
+echo -e "\n~~~~~ NUMBER GUESSING GAME ~~~~~\n"
+#Enter username
+echo "Enter your username:"
+read USERNAME
+
+#Check database for username
+RECORD=$($PSQL "SELECT game_no, best_game FROM user_data WHERE username = '$USERNAME'")
+if [[ -z $RECORD ]]
+then
+  #If not in database
+  echo -e "\nWelcome, $USERNAME! It looks like this is your first time here."
+  #Save username to database
+  INPUT_USERNAME=$($PSQL "INSERT INTO user_data(username) VALUES('$USERNAME')")
+else
+  #If username is in database
+  echo $RECORD | while IFS="|" read GAME_NO BEST_GAME
+  do
+    echo -e "\nWelcome back, $USERNAME! You have played $GAME_NO games, and your best game took $BEST_GAME guesses."
+  done
+fi
+
+#Collect guessed number
+echo -e "\nGuess the secret number between 1 and 1000:"
+
+COUNTER=1
+
+until [[ $GUESSED_NUMBER == $NUMBER_TO_GUESS ]]
+do
+
+  read GUESSED_NUMBER
+  if [[ ! $GUESSED_NUMBER =~ ^[0-9]+$ ]]
+  then
+    #If not an integer
+    echo -e "\nThat is not an integer, guess again:"
+
+  elif [[ $GUESSED_NUMBER > $NUMBER_TO_GUESS ]]
+  then
+    #If actual answer is lower
+    echo -e "It's lower than that, guess again:"
+    COUNTER=$(( $COUNTER + 1 ))
+
+  elif [[ $GUESSED_NUMBER < $NUMBER_TO_GUESS ]]
+  then
+    #If actual answer is higher
+    echo -e "It's higher than that, guess again:"
+    COUNTER=$(( $COUNTER + 1 ))
+
+  fi
+
+done
+
+echo -e "\nYou guessed it in $COUNTER tries. The secret number was $NUMBER_TO_GUESS. Nice job!"
+
+GAME_NO=$($PSQL "SELECT game_no FROM user_data WHERE username = '$USERNAME'")
+GAME_NO=$(( $GAME_NO + 1 ))
+UPDATE_GAME_NO=$($PSQL "UPDATE user_data SET game_no = $GAME_NO where username = '$USERNAME'")
+
+BEST_GAME=$($PSQL "SELECT best_game FROM user_data WHERE username = '$USERNAME'")
+if [[ $COUNTER < $BEST_GAME || -z $BEST_GAME ]]
+then
+  UPDATE_BEST_GAME=$($PSQL "UPDATE user_data SET best_game = $COUNTER where username = '$USERNAME'")
+fi
